@@ -11,6 +11,10 @@ DEVICE_METADATA_UUIDS: Final = "uuids"
 DEVICE_DEF_MANUFACTURER: Final = "Tuya"
 SET_DISCONNECTED_DELAY = 10 * 60
 
+CONF_AUTH_METHOD: Final = "auth_method"
+AUTH_METHOD_MANUAL: Final = "manual"
+AUTH_METHOD_CLOUD: Final = "cloud"
+
 CONF_UUID: Final = "uuid"
 CONF_LOCAL_KEY: Final = "local_key"
 CONF_CATEGORY: Final = "category"
@@ -18,6 +22,10 @@ CONF_PRODUCT_ID: Final = "product_id"
 CONF_DEVICE_NAME: Final = "device_name"
 CONF_PRODUCT_MODEL: Final = "product_model"
 CONF_PRODUCT_NAME: Final = "product_name"
+
+UUID_LENGTH: Final = 16
+DEVICE_ID_LENGTH: Final = 22
+LOCAL_KEY_MIN_LENGTH: Final = 6
 
 TUYA_API_DEVICES_URL: Final = "/v1.0/users/%s/devices"
 TUYA_API_FACTORY_INFO_URL: Final = "/v1.0/iot-03/devices/factory-infos?device_ids=%s"

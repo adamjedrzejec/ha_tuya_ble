@@ -26,7 +26,6 @@ from .tuya_ble import (
     TuyaBLEDeviceCredentials,
 )
 
-from .cloud import HASSTuyaBLEDeviceManager
 from .const import (
     DEVICE_DEF_MANUFACTURER,
     DOMAIN,
@@ -163,7 +162,7 @@ class TuyaBLEData:
     title: str
     device: TuyaBLEDevice
     product: TuyaBLEProductInfo
-    manager: HASSTuyaBLEDeviceManager
+    manager: AbstaractTuyaBLEDeviceManager
     coordinator: TuyaBLECoordinator
 
 
@@ -283,6 +282,11 @@ devices_database: dict[str, TuyaBLECategoryInfo] = {
                 name="Soil moisture sensor",
             ),
         },
+        # Temperature and humidity sensors share a datapoint layout, so an
+        # unlisted product of this category still works.
+        info=TuyaBLEProductInfo(
+            name="Temperature and humidity sensor",
+        ),
     ),
     "znhsb": TuyaBLECategoryInfo(
         products={
@@ -301,6 +305,29 @@ devices_database: dict[str, TuyaBLECategoryInfo] = {
         },
     ),
 }
+
+
+# Tuya device categories known to this integration, used to let a device be
+# set up by hand when its category cannot be read from the cloud.
+categories_database: dict[str, str] = {
+    "co2bj": "CO2 detector",
+    "ggq": "Irrigation computer",
+    "ms": "Smart lock",
+    "szjqr": "Fingerbot",
+    "wk": "Thermostatic radiator valve",
+    "wsdcg": "Temperature and humidity sensor",
+    "znhsb": "Smart water bottle",
+}
+
+
+def get_category_by_product_id(product_id: str | None) -> str | None:
+    """Find the category of a known product id."""
+    if not product_id:
+        return None
+    for category, category_info in devices_database.items():
+        if product_id in category_info.products:
+            return category
+    return None
 
 
 def get_product_info_by_ids(

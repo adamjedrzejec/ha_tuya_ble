@@ -3,9 +3,13 @@ from __future__ import annotations
 __version__ = "0.1.0"
 
 
+from .advertisement import (
+    TuyaBLEAdvertisement,
+    parse_advertisement,
+)
 from .const import (
     SERVICE_UUID,
-    TuyaBLEDataPointType, 
+    TuyaBLEDataPointType,
 )
 from .manager import (
     AbstaractTuyaBLEDeviceManager,
@@ -15,6 +19,8 @@ from .tuya_ble import TuyaBLEDataPoint, TuyaBLEDevice
 
 __all__ = [
     "AbstaractTuyaBLEDeviceManager",
+    "TuyaBLEAdvertisement",
+    "parse_advertisement",
     "TuyaBLEDataPoint",
     "TuyaBLEDataPointType",
     "TuyaBLEDevice",

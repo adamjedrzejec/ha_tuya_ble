@@ -22,26 +22,29 @@ TUYA_DOMAIN = "tuya"
 TUYA_RESPONSE_RESULT = "result"
 TUYA_RESPONSE_SUCCESS = "success"
 
-from homeassistant.helpers.entity import DeviceInfo, EntityDescription
-from homeassistant.helpers.update_coordinator import (
-    CoordinatorEntity,
-    DataUpdateCoordinator,
-)
+try:
+    from tuya_iot import AuthType, TuyaOpenAPI
 
-from tuya_iot import (
-    TuyaOpenAPI,
-    AuthType,
-    TuyaOpenMQ,
-    TuyaDeviceManager,
-)
+    TUYA_IOT_AVAILABLE = True
+except ImportError:  # pragma: no cover - the cloud path is optional
+    AuthType = None
+    TuyaOpenAPI = None
+    TUYA_IOT_AVAILABLE = False
 
+from .local import (
+    TuyaBLELocalDeviceManager,
+    credentials_from_data,
+    has_local_credentials,
+)
 from .tuya_ble import (
     AbstaractTuyaBLEDeviceManager,
-    TuyaBLEDevice,
     TuyaBLEDeviceCredentials,
 )
 
 from .const import (
+    AUTH_METHOD_CLOUD,
+    AUTH_METHOD_MANUAL,
+    CONF_AUTH_METHOD,
     CONF_PRODUCT_MODEL,
     CONF_UUID,
     CONF_LOCAL_KEY,
@@ -116,16 +119,19 @@ class HASSTuyaBLEDeviceManager(AbstaractTuyaBLEDeviceManager):
 
     @staticmethod
     def _has_credentials(data: dict[Any, Any]) -> bool:
-        for key in CONF_TUYA_DEVICE_KEYS:
-            if data.get(key) is None:
-                return False
-        return True
+        return has_local_credentials(data)
 
     async def _login(self, data: dict[str, Any], add_to_cache: bool) -> dict[Any, Any]:
         """Login into Tuya cloud using credentials from data dictionary."""
         global _cache
 
         if len(data) == 0:
+            return {}
+
+        if not TUYA_IOT_AVAILABLE:
+            _LOGGER.warning(
+                "tuya-iot-py-sdk is not installed, Tuya cloud login unavailable"
+            )
             return {}
 
         api = TuyaOpenAPI(
@@ -202,6 +208,8 @@ class HASSTuyaBLEDeviceManager(AbstaractTuyaBLEDeviceManager):
 
     async def build_cache(self) -> None:
         global _cache
+        if not TUYA_IOT_AVAILABLE:
+            return
         data = {}
         tuya_config_entries = self._hass.config_entries.async_entries(TUYA_DOMAIN)
         for config_entry in tuya_config_entries:
@@ -261,23 +269,17 @@ class HASSTuyaBLEDeviceManager(AbstaractTuyaBLEDeviceManager):
             if item is None or force_update:
                 if self._is_login_success(await self.login(True)):
                     item = _cache.get(cache_key)
-                    if item:
-                        await self._fill_cache_item(item)
+            if item and (force_update or len(item.credentials) == 0):
+                # A login only creates the cache item, its devices are read
+                # here, so a login made just before this call is usable.
+                await self._fill_cache_item(item)
 
             if item:
                 credentials = item.credentials.get(address)
 
         if credentials:
-            result = TuyaBLEDeviceCredentials(
-                credentials.get(CONF_UUID, ""),
-                credentials.get(CONF_LOCAL_KEY, ""),
-                credentials.get(CONF_DEVICE_ID, ""),
-                credentials.get(CONF_CATEGORY, ""),
-                credentials.get(CONF_PRODUCT_ID, ""),
-                credentials.get(CONF_DEVICE_NAME, ""),
-                credentials.get(CONF_PRODUCT_MODEL, ""),
-                credentials.get(CONF_PRODUCT_NAME, ""),
-            )
+            result = credentials_from_data(credentials)
+        if result:
             _LOGGER.debug("Retrieved: %s", result)
             if save_data:
                 if item:
@@ -289,3 +291,22 @@ class HASSTuyaBLEDeviceManager(AbstaractTuyaBLEDeviceManager):
     @property
     def data(self) -> dict[str, Any]:
         return self._data
+
+
+def async_get_device_manager(
+    hass: HomeAssistant,
+    data: dict[str, Any],
+) -> AbstaractTuyaBLEDeviceManager:
+    """Return the manager matching the way the entry stores its credentials.
+
+    Entries holding the device credentials themselves never touch the cloud;
+    the cloud manager is used only for entries set up with a Tuya account.
+    """
+    auth_method = data.get(CONF_AUTH_METHOD)
+    if auth_method == AUTH_METHOD_MANUAL:
+        return TuyaBLELocalDeviceManager(hass, data)
+    if auth_method != AUTH_METHOD_CLOUD and has_local_credentials(data):
+        # Entries set up before the manual method existed already hold the
+        # credentials, so they do not need the cloud either.
+        return TuyaBLELocalDeviceManager(hass, data)
+    return HASSTuyaBLEDeviceManager(hass, data)

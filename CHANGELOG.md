@@ -85,3 +85,31 @@ and this project adheres to [Semantic Versioning].
 
 - Connection to the device is postponed now. Previously some out of range device might prevents HA from fully booting.
 - Improved connection stability.
+
+## [0.2.0] - 2026-10-19
+
+### Added
+
+- Device credentials can be entered by hand, so the integration can be set up
+  and used without a Tuya account. The device UUID, product ID and category
+  are prefilled from the device's own Bluetooth advertisement.
+- Credentials can be corrected afterwards through the options of the entry.
+- Generic support for temperature and humidity sensors (category 'wsdcg')
+  whose product_id is not listed, using the datapoint layout shared by that
+  category.
+
+### Changed
+
+- The official Tuya integration is no longer a hard dependency, so setting up
+  Tuya BLE no longer requires signing in to the Tuya cloud.
+- Decoding of advertisement data moved to its own module and is now shared
+  between the config flow and the device.
+- Changing the options of an entry reloads it, so new credentials take effect
+  without restarting Home Assistant.
+
+### Fixed
+
+- `check_and_create_device_credentials` passed too few values to
+  `TuyaBLEDeviceCredentials` and always raised.
+- A pairing request built from overlong credentials silently produced a
+  malformed packet.

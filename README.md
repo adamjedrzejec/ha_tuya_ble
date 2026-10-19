@@ -14,9 +14,55 @@ Place the `custom_components` folder in your configuration directory (or add its
 
 ## Usage
 
-After adding to Home Assistant integration should discover all supported Bluetooth devices, or you can add discoverable devices manually.
+The integration talks to the devices over the Bluetooth adapter of your Home
+Assistant server. No Tuya Bluetooth gateway and no Tuya account are needed at
+runtime. Each device becomes its own entry, so several sensors can be added by
+repeating the setup.
 
-The integration works locally, but connection to Tuya BLE device requires device ID and encryption key from Tuya IOT cloud. It could be obtained using the same credentials as in official Tuya integration. To obtain the credentials, please refer to official Tuya integration [documentation](https://www.home-assistant.io/integrations/tuya/)
+Supported devices are discovered automatically; discoverable devices can also
+be added manually from **Settings → Devices & services → Add integration →
+Tuya BLE**.
+
+### Device credentials
+
+Tuya BLE devices encrypt their traffic with a key that belongs to the device,
+so the integration needs these values once, after which everything happens
+locally:
+
+| Value | Length | Where it comes from |
+| --- | --- | --- |
+| Device UUID | 16 characters | broadcast by the device, filled in for you |
+| Product ID | 8 characters | broadcast by the device, filled in for you |
+| Category | - | preselected when the product is known |
+| Device ID | 22 characters | has to be supplied, see below |
+| Local key | 16 characters | has to be supplied, see below |
+
+Setup offers two ways to provide them:
+
+* **Enter the device credentials** - no Tuya account is used at all. The UUID,
+  product ID and category are prefilled from the device's own advertisement,
+  so usually only the device ID and local key are left to paste in.
+* **Look the credentials up in the Tuya cloud** - the original behaviour, kept
+  for convenience. It signs in once to read the credentials and then stores
+  them in the config entry.
+
+To change credentials later, use **Configure** on the device's entry.
+
+### Obtaining the device ID and local key without the Tuya cloud API
+
+These two values are issued when the device is paired with the mobile app, and
+the device does not broadcast them. Ways to read them out:
+
+* From the Smart Life / Tuya app data on a rooted Android device or from an
+  unencrypted app backup: the preferences and databases of the app contain the
+  `devId` and `localKey` of every paired device.
+* With [tinytuya](https://github.com/jasonacox/tinytuya)'s `wizard`, or with
+  any other tool that dumps the device list of a Tuya account, run once and
+  then discarded.
+* From a Tuya IoT account via the built-in cloud option above, which also only
+  reads them once.
+
+Keep the local key safe: it is the encryption key of the device.
 
 ## Supported devices list
 
@@ -32,6 +78,9 @@ The integration works locally, but connection to Tuya BLE device requires device
 
 * Temperature and humidity sensors (category_id 'wsdcg')
   + Soil moisture sensor (product_id 'ojzlzzsw').
+  + Any other sensor of this category, using the datapoint layout shared by
+    Tuya BLE temperature and humidity sensors: temperature, humidity, battery
+    state and battery level.
 
 * CO2 sensors (category_id 'co2bj')
   + CO2 Detector (product_id '59s19z5m').

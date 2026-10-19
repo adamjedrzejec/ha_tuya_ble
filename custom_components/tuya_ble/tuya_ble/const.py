@@ -15,6 +15,9 @@ MANUFACTURER_DATA_ID = 0x07D0
 
 RESPONSE_WAIT_TIMEOUT = 60
 
+# uuid (16 bytes) + first 6 bytes of the local key + device id (22 bytes)
+PAIRING_REQUEST_LENGTH = 44
+
 
 class TuyaBLECode(Enum):
     FUN_SENDER_DEVICE_INFO = 0x0000

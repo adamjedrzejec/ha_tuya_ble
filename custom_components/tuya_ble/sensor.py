@@ -86,6 +86,42 @@ class TuyaBLETemperatureMapping(TuyaBLESensorMapping):
     )
 
 
+@dataclass
+class TuyaBLEHumidityMapping(TuyaBLESensorMapping):
+    description: SensorEntityDescription = field(
+        default_factory=lambda: SensorEntityDescription(
+            key="humidity",
+            device_class=SensorDeviceClass.HUMIDITY,
+            native_unit_of_measurement=PERCENTAGE,
+            state_class=SensorStateClass.MEASUREMENT,
+        )
+    )
+
+
+@dataclass
+class TuyaBLEBatteryStateMapping(TuyaBLESensorMapping):
+    description: SensorEntityDescription = field(
+        default_factory=lambda: SensorEntityDescription(
+            key="battery_state",
+            icon="mdi:battery",
+            device_class=SensorDeviceClass.ENUM,
+            entity_category=EntityCategory.DIAGNOSTIC,
+            options=[
+                BATTERY_STATE_LOW,
+                BATTERY_STATE_NORMAL,
+                BATTERY_STATE_HIGH,
+            ],
+        )
+    )
+    icons: list[str] | None = field(
+        default_factory=lambda: [
+            "mdi:battery-alert",
+            "mdi:battery-50",
+            "mdi:battery-check",
+        ]
+    )
+
+
 def is_co2_alarm_enabled(self: TuyaBLESensor, product: TuyaBLEProductInfo) -> bool:
     result: bool = True
     datapoint = self._device.datapoints[13]
@@ -259,6 +295,17 @@ mapping: dict[str, TuyaBLECategorySensorMapping] = {
                 TuyaBLEBatteryMapping(dp_id=4),
             ],
         },
+        # Datapoint layout shared by Tuya BLE temperature and humidity
+        # sensors, used for any product of the category not listed above.
+        mapping=[
+            TuyaBLETemperatureMapping(
+                dp_id=1,
+                coefficient=10.0,
+            ),
+            TuyaBLEHumidityMapping(dp_id=2),
+            TuyaBLEBatteryStateMapping(dp_id=3),
+            TuyaBLEBatteryMapping(dp_id=4),
+        ],
     ),
     "znhsb": TuyaBLECategorySensorMapping(
         products={

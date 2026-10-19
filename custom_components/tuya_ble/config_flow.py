@@ -3,26 +3,29 @@
 from __future__ import annotations
 
 import logging
-import pycountry
+from collections import namedtuple
 from typing import Any
 
 import voluptuous as vol
-from tuya_iot import AuthType
 
+from homeassistant.components.bluetooth import (
+    BluetoothServiceInfoBleak,
+    async_discovered_service_info,
+)
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     OptionsFlowWithConfigEntry,
 )
-from homeassistant.components.bluetooth import (
-    BluetoothServiceInfoBleak,
-    async_discovered_service_info,
-)
-from homeassistant.const import CONF_ADDRESS
+from homeassistant.const import CONF_ADDRESS, CONF_DEVICE_ID
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowHandler, FlowResult
-
-from collections import namedtuple
+from homeassistant.helpers.selector import (
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+)
 
 Country = namedtuple("Country", ["name", "country_code", "endpoint"])
 
@@ -45,16 +48,36 @@ TUYA_COUNTRIES = [
     Country("Europe", "49", "https://openapi.tuyaeu.com"),
     Country("United States", "1", "https://openapi.tuyaus.com"),
     Country("United Kingdom", "44", "https://openapi.tuyaeu.com"),
-    Country("China", "86", "https://openapi.tuyacn.com")
+    Country("China", "86", "https://openapi.tuyacn.com"),
 ]
 
-from .tuya_ble import SERVICE_UUID, TuyaBLEDeviceCredentials
-
+from .cloud import TUYA_IOT_AVAILABLE, HASSTuyaBLEDeviceManager
 from .const import (
+    AUTH_METHOD_CLOUD,
+    AUTH_METHOD_MANUAL,
+    CONF_AUTH_METHOD,
+    CONF_CATEGORY,
+    CONF_DEVICE_NAME,
+    CONF_LOCAL_KEY,
+    CONF_PRODUCT_ID,
+    CONF_UUID,
+    DEVICE_ID_LENGTH,
     DOMAIN,
+    LOCAL_KEY_MIN_LENGTH,
+    UUID_LENGTH,
 )
-from .devices import TuyaBLEData, get_device_readable_name
-from .cloud import HASSTuyaBLEDeviceManager
+from .devices import (
+    categories_database,
+    get_category_by_product_id,
+    get_device_readable_name,
+)
+from .local import TuyaBLELocalDeviceManager, has_local_credentials
+from .tuya_ble import (
+    SERVICE_UUID,
+    AbstaractTuyaBLEDeviceManager,
+    TuyaBLEDeviceCredentials,
+    parse_advertisement,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,8 +88,14 @@ async def _try_login(
     errors: dict[str, str],
     placeholders: dict[str, Any],
 ) -> dict[str, Any] | None:
-    response: dict[Any, Any] | None
+    response: dict[Any, Any] | None = None
     data: dict[str, Any]
+
+    if not TUYA_IOT_AVAILABLE:
+        errors["base"] = "cloud_unavailable"
+        return None
+
+    from tuya_iot import AuthType
 
     country = [
         country
@@ -94,6 +123,7 @@ async def _try_login(
         response = await manager._login(data, True)
 
         if response.get(TUYA_RESPONSE_SUCCESS, False):
+            data[CONF_AUTH_METHOD] = AUTH_METHOD_CLOUD
             return data
 
     errors["base"] = "login_error"
@@ -123,10 +153,12 @@ def _show_login_form(
 
     def_country_name: str | None = None
     try:
+        import pycountry
+
         def_country = pycountry.countries.get(alpha_2=flow.hass.config.country)
         if def_country:
             def_country_name = def_country.name
-    except:
+    except Exception:  # noqa: BLE001 - only used to preselect a country
         pass
 
     return flow.async_show_form(
@@ -160,55 +192,190 @@ def _show_login_form(
     )
 
 
+def _category_selector() -> SelectSelector:
+    """Selector of the device category, which also accepts an unlisted one."""
+    return SelectSelector(
+        SelectSelectorConfig(
+            options=[
+                SelectOptionDict(value=category, label=f"{name} ({category})")
+                for category, name in sorted(
+                    categories_database.items(), key=lambda item: item[1]
+                )
+            ],
+            custom_value=True,
+            mode=SelectSelectorMode.DROPDOWN,
+        )
+    )
+
+
+def _validate_credentials(
+    user_input: dict[str, Any],
+    errors: dict[str, str],
+) -> dict[str, Any] | None:
+    """Validate manually entered device credentials."""
+    data = {key: str(value).strip() for key, value in user_input.items()}
+
+    if len(data.get(CONF_UUID, "")) != UUID_LENGTH:
+        errors[CONF_UUID] = "invalid_uuid"
+    if len(data.get(CONF_DEVICE_ID, "")) != DEVICE_ID_LENGTH:
+        errors[CONF_DEVICE_ID] = "invalid_device_id"
+    if len(data.get(CONF_LOCAL_KEY, "")) < LOCAL_KEY_MIN_LENGTH:
+        errors[CONF_LOCAL_KEY] = "invalid_local_key"
+    if not data.get(CONF_CATEGORY):
+        errors[CONF_CATEGORY] = "invalid_category"
+    if not data.get(CONF_PRODUCT_ID):
+        errors[CONF_PRODUCT_ID] = "invalid_product_id"
+
+    if errors:
+        return None
+
+    data[CONF_AUTH_METHOD] = AUTH_METHOD_MANUAL
+    if not data.get(CONF_DEVICE_NAME):
+        data.pop(CONF_DEVICE_NAME, None)
+    return data
+
+
+def _suggest(key: str, user_input: dict[str, Any]) -> dict[str, Any]:
+    """Prefill a field only when a value for it is known."""
+    value = user_input.get(key)
+    return {"description": {"suggested_value": value}} if value else {}
+
+
+def _show_credentials_form(
+    flow: FlowHandler,
+    user_input: dict[str, Any],
+    errors: dict[str, str],
+    placeholders: dict[str, Any],
+) -> FlowResult:
+    """Shows the form for entering the device credentials by hand."""
+    return flow.async_show_form(
+        step_id="credentials",
+        data_schema=vol.Schema(
+            {
+                vol.Required(CONF_UUID, **_suggest(CONF_UUID, user_input)): str,
+                vol.Required(
+                    CONF_DEVICE_ID, **_suggest(CONF_DEVICE_ID, user_input)
+                ): str,
+                vol.Required(
+                    CONF_LOCAL_KEY, **_suggest(CONF_LOCAL_KEY, user_input)
+                ): str,
+                vol.Required(
+                    CONF_CATEGORY, **_suggest(CONF_CATEGORY, user_input)
+                ): _category_selector(),
+                vol.Required(
+                    CONF_PRODUCT_ID, **_suggest(CONF_PRODUCT_ID, user_input)
+                ): str,
+                vol.Optional(
+                    CONF_DEVICE_NAME, **_suggest(CONF_DEVICE_NAME, user_input)
+                ): str,
+            }
+        ),
+        errors=errors,
+        description_placeholders=placeholders,
+    )
+
+
+def _credentials_from_advertisement(
+    discovery_info: BluetoothServiceInfoBleak | None,
+) -> dict[str, Any]:
+    """Prefill what the device broadcasts itself: its uuid and product id."""
+    result: dict[str, Any] = {}
+    if discovery_info is None:
+        return result
+    advertisement = parse_advertisement(
+        discovery_info.service_data,
+        discovery_info.manufacturer_data,
+    )
+    if advertisement.uuid:
+        result[CONF_UUID] = advertisement.uuid
+    if advertisement.product_id:
+        result[CONF_PRODUCT_ID] = advertisement.product_id
+        category = get_category_by_product_id(advertisement.product_id)
+        if category:
+            result[CONF_CATEGORY] = category
+    return result
+
+
 class TuyaBLEOptionsFlow(OptionsFlowWithConfigEntry):
     """Handle a Tuya BLE options flow."""
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow."""
         super().__init__(config_entry)
+        self._data: dict[str, Any] = dict(config_entry.options)
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Manage the options."""
-        return await self.async_step_login(user_input)
+        """Let the user choose how the credentials are provided."""
+        return self.async_show_menu(
+            step_id="init",
+            menu_options=["credentials", "login"],
+        )
+
+    async def async_step_credentials(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle editing the device credentials by hand."""
+        errors: dict[str, str] = {}
+        placeholders: dict[str, Any] = {
+            CONF_ADDRESS: self.config_entry.data.get(CONF_ADDRESS, "")
+        }
+
+        if user_input is not None:
+            data = _validate_credentials(user_input, errors)
+            if data:
+                self._data.update(data)
+                return self.async_create_entry(
+                    title=self.config_entry.title,
+                    data=self._data,
+                )
+        else:
+            user_input = {
+                key: self._data.get(key, "")
+                for key in (
+                    CONF_UUID,
+                    CONF_DEVICE_ID,
+                    CONF_LOCAL_KEY,
+                    CONF_CATEGORY,
+                    CONF_PRODUCT_ID,
+                    CONF_DEVICE_NAME,
+                )
+            }
+
+        return _show_credentials_form(self, user_input, errors, placeholders)
 
     async def async_step_login(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle the Tuya IOT platform login step."""
+        """Handle the optional Tuya IOT platform login step."""
         errors: dict[str, str] = {}
         placeholders: dict[str, Any] = {}
         credentials: TuyaBLEDeviceCredentials | None = None
         address: str | None = self.config_entry.data.get(CONF_ADDRESS)
 
         if user_input is not None:
-            entry: TuyaBLEData | None = None
-            domain_data = self.hass.data.get(DOMAIN)
-            if domain_data:
-                entry = domain_data.get(self.config_entry.entry_id)
-            if entry:
-                login_data = await _try_login(
-                    entry.manager,
-                    user_input,
-                    errors,
-                    placeholders,
+            manager = HASSTuyaBLEDeviceManager(self.hass, self._data)
+            login_data = await _try_login(
+                manager,
+                user_input,
+                errors,
+                placeholders,
+            )
+            if login_data:
+                self._data.update(login_data)
+                credentials = await manager.get_device_credentials(
+                    address, True, True
                 )
-                if login_data:
-                    credentials = await entry.manager.get_device_credentials(
-                        address, True, True
+                if credentials:
+                    return self.async_create_entry(
+                        title=self.config_entry.title,
+                        data=manager.data,
                     )
-                    if credentials:
-                        return self.async_create_entry(
-                            title=self.config_entry.title,
-                            data=entry.manager.data,
-                        )
-                    else:
-                        errors["base"] = "device_not_registered"
+                errors["base"] = "device_not_registered"
 
         if user_input is None:
-            user_input = {}
-            user_input.update(self.config_entry.options)
+            user_input = dict(self._data)
 
         return _show_login_form(self, user_input, errors, placeholders)
 
@@ -227,6 +394,25 @@ class TuyaBLEConfigFlow(ConfigFlow, domain=DOMAIN):
         self._manager: HASSTuyaBLEDeviceManager | None = None
         self._get_device_info_error = False
 
+    @property
+    def _cloud_manager(self) -> HASSTuyaBLEDeviceManager:
+        """Manager used to look credentials up in the cloud, if asked for."""
+        if self._manager is None:
+            self._manager = HASSTuyaBLEDeviceManager(self.hass, self._data)
+        return self._manager
+
+    async def _async_build_cache(self) -> None:
+        """Pick up credentials of the official Tuya integration, if present."""
+        try:
+            await self._cloud_manager.build_cache()
+        except Exception as ex:  # noqa: BLE001 - the cloud is entirely optional
+            _LOGGER.debug("Could not read credentials from Tuya cloud: %s", ex)
+
+    async def _async_readable_name(
+        self, discovery_info: BluetoothServiceInfoBleak
+    ) -> str:
+        return await get_device_readable_name(discovery_info, self._cloud_manager)
+
     async def async_step_bluetooth(
         self, discovery_info: BluetoothServiceInfoBleak
     ) -> FlowResult:
@@ -234,59 +420,19 @@ class TuyaBLEConfigFlow(ConfigFlow, domain=DOMAIN):
         await self.async_set_unique_id(discovery_info.address)
         self._abort_if_unique_id_configured()
         self._discovery_info = discovery_info
-        if self._manager is None:
-            self._manager = HASSTuyaBLEDeviceManager(self.hass, self._data)
-        await self._manager.build_cache()
+        await self._async_build_cache()
         self.context["title_placeholders"] = {
-            "name": await get_device_readable_name(
-                discovery_info,
-                self._manager,
-            )
+            "name": await self._async_readable_name(discovery_info)
         }
-        return await self.async_step_login()
+        self._data[CONF_ADDRESS] = discovery_info.address
+        return await self.async_step_setup_method()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle the user step."""
-        if self._manager is None:
-            self._manager = HASSTuyaBLEDeviceManager(self.hass, self._data)
-        await self._manager.build_cache()
-        return await self.async_step_login()
-
-    async def async_step_login(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle the Tuya IOT platform login step."""
-        data: dict[str, Any] | None = None
-        errors: dict[str, str] = {}
-        placeholders: dict[str, Any] = {}
-
-        if user_input is not None:
-            data = await _try_login(
-                self._manager,
-                user_input,
-                errors,
-                placeholders,
-            )
-            if data:
-                self._data.update(data)
-                return await self.async_step_device()
-
-        if user_input is None:
-            user_input = {}
-            if self._discovery_info:
-                await self._manager.get_device_credentials(
-                    self._discovery_info.address,
-                    False,
-                    True,
-                )
-            if self._data is None or len(self._data) == 0:
-                self._manager.get_login_from_cache()
-            if self._data is not None and len(self._data) > 0:
-                user_input.update(self._data)
-
-        return _show_login_form(self, user_input, errors, placeholders)
+        await self._async_build_cache()
+        return await self.async_step_device()
 
     async def async_step_device(
         self, user_input: dict[str, Any] | None = None
@@ -296,25 +442,11 @@ class TuyaBLEConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             address = user_input[CONF_ADDRESS]
-            discovery_info = self._discovered_devices[address]
-            local_name = await get_device_readable_name(discovery_info, self._manager)
-            await self.async_set_unique_id(
-                discovery_info.address, raise_on_progress=False
-            )
+            self._discovery_info = self._discovered_devices[address]
+            await self.async_set_unique_id(address, raise_on_progress=False)
             self._abort_if_unique_id_configured()
-            credentials = await self._manager.get_device_credentials(
-                discovery_info.address, self._get_device_info_error, True
-            )
-            self._data[CONF_ADDRESS] = discovery_info.address
-            if credentials is None:
-                self._get_device_info_error = True
-                errors["base"] = "device_not_registered"
-            else:
-                return self.async_create_entry(
-                    title=local_name,
-                    data={CONF_ADDRESS: discovery_info.address},
-                    options=self._data,
-                )
+            self._data[CONF_ADDRESS] = address
+            return await self.async_step_setup_method()
 
         if discovery := self._discovery_info:
             self._discovered_devices[discovery.address] = discovery
@@ -348,9 +480,8 @@ class TuyaBLEConfigFlow(ConfigFlow, domain=DOMAIN):
                         default=def_address,
                     ): vol.In(
                         {
-                            service_info.address: await get_device_readable_name(
-                                service_info,
-                                self._manager,
+                            service_info.address: await self._async_readable_name(
+                                service_info
                             )
                             for service_info in self._discovered_devices.values()
                         }
@@ -359,6 +490,87 @@ class TuyaBLEConfigFlow(ConfigFlow, domain=DOMAIN):
             ),
             errors=errors,
         )
+
+    async def async_step_setup_method(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Let the user choose between local credentials and a cloud lookup."""
+        return self.async_show_menu(
+            step_id="setup_method",
+            menu_options=["credentials", "login"],
+        )
+
+    async def _async_create_entry(
+        self, manager: AbstaractTuyaBLEDeviceManager
+    ) -> FlowResult:
+        address: str = self._data[CONF_ADDRESS]
+        if self._discovery_info:
+            title = await get_device_readable_name(self._discovery_info, manager)
+        else:
+            title = address
+        return self.async_create_entry(
+            title=title,
+            data={CONF_ADDRESS: address},
+            options=self._data,
+        )
+
+    async def async_step_credentials(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle entering the device credentials by hand, without the cloud."""
+        errors: dict[str, str] = {}
+        placeholders: dict[str, Any] = {
+            CONF_ADDRESS: self._data.get(CONF_ADDRESS, "")
+        }
+
+        if user_input is not None:
+            data = _validate_credentials(user_input, errors)
+            if data:
+                self._data.update(data)
+                return await self._async_create_entry(
+                    TuyaBLELocalDeviceManager(self.hass, self._data)
+                )
+        else:
+            user_input = _credentials_from_advertisement(self._discovery_info)
+
+        return _show_credentials_form(self, user_input, errors, placeholders)
+
+    async def async_step_login(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle the optional Tuya IOT platform login step."""
+        data: dict[str, Any] | None = None
+        errors: dict[str, str] = {}
+        placeholders: dict[str, Any] = {}
+        address: str = self._data[CONF_ADDRESS]
+
+        if user_input is not None:
+            data = await _try_login(
+                self._cloud_manager,
+                user_input,
+                errors,
+                placeholders,
+            )
+            if data:
+                self._data.update(data)
+                credentials = await self._cloud_manager.get_device_credentials(
+                    address, self._get_device_info_error, True
+                )
+                if credentials:
+                    return await self._async_create_entry(self._cloud_manager)
+                self._get_device_info_error = True
+                errors["base"] = "device_not_registered"
+
+        if user_input is None:
+            # Credentials may already be known from the official Tuya
+            # integration, in which case no login is needed at all.
+            await self._cloud_manager.get_device_credentials(address, False, True)
+            if has_local_credentials(self._data):
+                return await self._async_create_entry(self._cloud_manager)
+            self._cloud_manager.get_login_from_cache()
+            user_input = dict(self._data)
+
+        return _show_login_form(self, user_input, errors, placeholders)
 
     @staticmethod
     @callback

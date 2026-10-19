@@ -21,13 +21,13 @@ from bleak_retry_connector import (
 )
 from Crypto.Cipher import AES
 
+from .advertisement import parse_advertisement
 from .const import (
     CHARACTERISTIC_NOTIFY,
     CHARACTERISTIC_WRITE,
     GATT_MTU,
-    MANUFACTURER_DATA_ID,
+    PAIRING_REQUEST_LENGTH,
     RESPONSE_WAIT_TIMEOUT,
-    SERVICE_UUID,
     TuyaBLECode,
     TuyaBLEDataPointType,
 )
@@ -233,6 +233,8 @@ class TuyaBLEDevice:
         self._is_bound = False
         self._flags = 0
         self._protocol_version = 2
+        self._advertised_uuid: str | None = None
+        self._advertised_product_id: str | None = None
 
         self._device_version: str = ""
         self._protocol_version_str: str = ""
@@ -274,8 +276,11 @@ class TuyaBLEDevice:
         result += self._device_info.uuid.encode()
         result += self._local_key
         result += self._device_info.device_id.encode()
-        for _ in range(44 - len(result)):
-            result += b"\x00"
+        if len(result) > PAIRING_REQUEST_LENGTH:
+            raise TuyaBLEDeviceError(
+                "Device credentials are too long for a pairing request"
+            )
+        result += b"\x00" * (PAIRING_REQUEST_LENGTH - len(result))
 
         return result
 
@@ -306,33 +311,19 @@ class TuyaBLEDevice:
         return self._device_info is not None
 
     def _decode_advertisement_data(self) -> None:
-        raw_product_id: bytes | None = None
-        # raw_product_key: bytes | None = None
-        raw_uuid: bytes | None = None
-        if self._advertisement_data:
-            if self._advertisement_data.service_data:
-                service_data = self._advertisement_data.service_data.get(
-                    SERVICE_UUID)
-                if service_data and len(service_data) > 1:
-                    match service_data[0]:
-                        case 0:
-                            raw_product_id = service_data[1:]
-                        # case 1:
-                        #    raw_product_key = service_data[1:]
-
-            if self._advertisement_data.manufacturer_data:
-                manufacturer_data = self._advertisement_data.manufacturer_data.get(
-                    MANUFACTURER_DATA_ID
-                )
-                if manufacturer_data and len(manufacturer_data) > 6:
-                    self._is_bound = (manufacturer_data[0] & 0x80) != 0
-                    self._protocol_version = manufacturer_data[1]
-                    raw_uuid = manufacturer_data[6:]
-                    if raw_product_id:
-                        key = hashlib.md5(raw_product_id).digest()
-                        cipher = AES.new(key, AES.MODE_CBC, key)
-                        raw_uuid = cipher.decrypt(raw_uuid)
-                        self._uuid = raw_uuid.decode("utf-8")
+        if not self._advertisement_data:
+            return
+        advertisement = parse_advertisement(
+            self._advertisement_data.service_data,
+            self._advertisement_data.manufacturer_data,
+        )
+        if advertisement.has_device_state:
+            self._is_bound = advertisement.is_bound
+            self._protocol_version = advertisement.protocol_version
+        if advertisement.uuid:
+            self._advertised_uuid = advertisement.uuid
+        if advertisement.product_id:
+            self._advertised_product_id = advertisement.product_id
 
     @property
     def address(self) -> str:
@@ -360,6 +351,16 @@ class TuyaBLEDevice:
             return self._device_info.uuid
         else:
             return ""
+
+    @property
+    def advertised_uuid(self) -> str | None:
+        """Uuid decoded from the advertisement, no cloud access needed."""
+        return self._advertised_uuid
+
+    @property
+    def advertised_product_id(self) -> str | None:
+        """Product id decoded from the advertisement, no cloud access needed."""
+        return self._advertised_product_id
 
     @property
     def local_key(self) -> str:

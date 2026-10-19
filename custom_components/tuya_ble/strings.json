@@ -6,7 +6,13 @@
     "error": {
       "device_not_registered": "Device is not registered in Tuya cloud",
       "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
-      "login_error": "Login error ({code}): {msg}"
+      "login_error": "Login error ({code}): {msg}",
+      "invalid_uuid": "Device UUID must be 16 characters long",
+      "invalid_device_id": "Device ID must be 22 characters long",
+      "invalid_local_key": "Local key is too short",
+      "invalid_category": "Device category is required",
+      "invalid_product_id": "Product ID is required",
+      "cloud_unavailable": "Tuya cloud support is not installed, enter the device credentials instead"
     },
     "flow_title": "{name}",
     "step": {
@@ -14,7 +20,7 @@
         "data": {
           "address": "Tuya BLE device"
         },
-        "description": "Select Tuya BLE device to setup. Device must be registered in the cloud using the mobile application. It's better to unbind the device from Tuya Bluetooth gateway, if any."
+        "description": "Select the Tuya BLE device to set up. It's better to unbind the device from a Tuya Bluetooth gateway, if any."
       },
       "login": {
         "data": {
@@ -24,7 +30,27 @@
           "password": "[%key:common::config_flow::data::password%]",
           "username": "Account"
         },
-        "description": "Tuya BLE requires obtaining encryption key from Tuya cloud. Almost all devices only need to access the cloud once during setup.\n\nRefer to documentation of Tuya integration to retrive the cloud credentials https://www.home-assistant.io/integrations/tuya/\n\nEnter your Tuya credentials."
+        "description": "Optional: the encryption key of the device can be read from the Tuya cloud instead of being entered by hand. Almost all devices only need this once, during setup.\n\nRefer to the documentation of the Tuya integration to retrieve the cloud credentials https://www.home-assistant.io/integrations/tuya/\n\nEnter your Tuya credentials."
+      },
+      "setup_method": {
+        "title": "Device credentials",
+        "description": "The device is reached over Bluetooth, but its traffic is encrypted with a key that belongs to the device. Enter that key directly, or let it be looked up with a Tuya IoT account.",
+        "menu_options": {
+          "credentials": "Enter the device credentials (no Tuya account)",
+          "login": "Look the credentials up in the Tuya cloud"
+        }
+      },
+      "credentials": {
+        "title": "Device credentials",
+        "description": "Enter the credentials of the device at {address}. They are read from the device once and kept in Home Assistant, so no Tuya account and no Bluetooth gateway are used afterwards.\n\nThe UUID and product ID are filled in from what the device broadcasts. The device ID and local key cannot be broadcast and have to be supplied: see the integration documentation for ways to read them out.\n\nUUID is 16 characters, device ID is 22 characters, local key is 16 characters.",
+        "data": {
+          "uuid": "Device UUID",
+          "device_id": "Device ID",
+          "local_key": "Local key",
+          "category": "Category",
+          "product_id": "Product ID",
+          "device_name": "Name (optional)"
+        }
       }
     }
   },
@@ -86,7 +112,7 @@
         }
       },
       "beep_volume": {
-          "name": "Lock Volume"
+        "name": "Lock Volume"
       }
     },
     "binary_sensor": {
@@ -140,27 +166,27 @@
         "name": "Water intake"
       },
       "residual_electricity": {
-          "name": "Battery"
+        "name": "Battery"
       },
       "alarm_lock": {
-          "name": "Alarm"
+        "name": "Alarm"
       },
       "wrong_finger": {
-          "name": "Wrong Fingerprint"
+        "name": "Wrong Fingerprint"
       },
       "wrong_password": {
-          "name": "Wrong Password"
+        "name": "Wrong Password"
       },
       "low_battery": {
-          "name": "Low Battery"
+        "name": "Low Battery"
       },
       "time_left": {
-          "name": "Remaining irrigation time"
+        "name": "Remaining irrigation time"
       }
     },
     "switch": {
       "programming_mode": {
-        "name": "Programming Mode" 
+        "name": "Programming Mode"
       },
       "programming_switch": {
         "name": "Programming Switch"
@@ -194,7 +220,7 @@
       },
       "program_repeat_forever": {
         "name": "Repeat forever"
-      },      
+      },
       "reverse_positions": {
         "name": "Reverse positions"
       },
@@ -202,11 +228,11 @@
         "name": "[%key:component::switch::entity_component::_::name%]"
       },
       "lock_motor_state": {
-          "name": "Motor State"
-      },            
+        "name": "Motor State"
+      },
       "water_valve": {
-          "name": "Irrigation valve"
-      }    
+        "name": "Irrigation valve"
+      }
     },
     "text": {
       "program": {
@@ -218,7 +244,13 @@
     "error": {
       "device_not_registered": "Device is not registered in Tuya cloud",
       "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
-      "login_error": "Login error ({code}): {msg}"
+      "login_error": "Login error ({code}): {msg}",
+      "invalid_uuid": "Device UUID must be 16 characters long",
+      "invalid_device_id": "Device ID must be 22 characters long",
+      "invalid_local_key": "Local key is too short",
+      "invalid_category": "Device category is required",
+      "invalid_product_id": "Product ID is required",
+      "cloud_unavailable": "Tuya cloud support is not installed, enter the device credentials instead"
     },
     "step": {
       "login": {
@@ -230,6 +262,26 @@
           "username": "Account"
         },
         "description": "Refer to documentation of Tuya integration to retrive the cloud credentials https://www.home-assistant.io/integrations/tuya/\n\nEnter your Tuya credentials."
+      },
+      "init": {
+        "title": "Device credentials",
+        "description": "The device is reached over Bluetooth, but its traffic is encrypted with a key that belongs to the device. Enter that key directly, or let it be looked up with a Tuya IoT account.",
+        "menu_options": {
+          "credentials": "Enter the device credentials (no Tuya account)",
+          "login": "Look the credentials up in the Tuya cloud"
+        }
+      },
+      "credentials": {
+        "title": "Device credentials",
+        "description": "Enter the credentials of the device at {address}. They are read from the device once and kept in Home Assistant, so no Tuya account and no Bluetooth gateway are used afterwards.\n\nThe UUID and product ID are filled in from what the device broadcasts. The device ID and local key cannot be broadcast and have to be supplied: see the integration documentation for ways to read them out.\n\nUUID is 16 characters, device ID is 22 characters, local key is 16 characters.",
+        "data": {
+          "uuid": "Device UUID",
+          "device_id": "Device ID",
+          "local_key": "Local key",
+          "category": "Category",
+          "product_id": "Product ID",
+          "device_name": "Name (optional)"
+        }
       }
     }
   }

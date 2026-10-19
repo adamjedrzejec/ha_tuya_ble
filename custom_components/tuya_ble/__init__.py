@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 
-from bleak_retry_connector import BLEAK_RETRY_EXCEPTIONS as BLEAK_EXCEPTIONS, get_device
+from bleak_retry_connector import get_device
 
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth.match import ADDRESS, BluetoothCallbackMatcher
@@ -14,7 +14,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 
 from .tuya_ble import TuyaBLEDevice
 
-from .cloud import HASSTuyaBLEDeviceManager
+from .cloud import async_get_device_manager
 from .const import DOMAIN
 from .devices import TuyaBLECoordinator, TuyaBLEData, get_device_product_info
 
@@ -42,21 +42,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise ConfigEntryNotReady(
             f"Could not find Tuya BLE device with address {address}"
         )
-    manager = HASSTuyaBLEDeviceManager(hass, entry.options.copy())
+    manager = async_get_device_manager(hass, entry.options.copy())
     device = TuyaBLEDevice(manager, ble_device)
     await device.initialize()
+    if not device.device_id:
+        raise ConfigEntryNotReady(
+            f"Credentials of the Tuya BLE device with address {address} are "
+            "missing or incomplete, reconfigure the device to enter them"
+        )
     product_info = get_device_product_info(device)
 
     coordinator = TuyaBLECoordinator(hass, device)
 
-    '''
-    try:
-        await device.update()
-    except BLEAK_EXCEPTIONS as ex:
-        raise ConfigEntryNotReady(
-            f"Could not communicate with Tuya BLE device with address {address}"
-        ) from ex
-    '''
     hass.add_job(device.update())
 
     @callback
@@ -100,10 +97,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Handle options update."""
-    data: TuyaBLEData = hass.data[DOMAIN][entry.entry_id]
-    if entry.title != data.title:
-        await hass.config_entries.async_reload(entry.entry_id)
+    """Handle options update.
+
+    Reload unconditionally: the options hold the device credentials, so a
+    change to them has to reach the device connection.
+    """
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

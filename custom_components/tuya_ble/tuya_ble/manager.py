@@ -48,19 +48,20 @@ class AbstaractTuyaBLEDeviceManager(ABC):
 
     @classmethod
     def check_and_create_device_credentials(
-        self,
+        cls,
         uuid: str | None,
         local_key: str | None,
         device_id: str | None,
         category: str | None,
         product_id: str | None,
-        device_name: str | None,
-        product_name: str | None,
+        device_name: str | None = None,
+        product_model: str | None = None,
+        product_name: str | None = None,
     ) -> TuyaBLEDeviceCredentials | None:
         """Checks and creates credentials of the Tuya BLE device."""
         if (
-            uuid and 
-            local_key and 
+            uuid and
+            local_key and
             device_id and
             category and
             product_id
@@ -72,6 +73,7 @@ class AbstaractTuyaBLEDeviceManager(ABC):
                 category,
                 product_id,
                 device_name,
+                product_model,
                 product_name,
             )
         else:
